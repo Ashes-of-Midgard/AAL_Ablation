@@ -3,6 +3,7 @@ import sys
 import numpy as np
 import time
 import torch
+from torch.utils.data import DataLoader
 import utils
 import glob
 import random
@@ -168,10 +169,10 @@ def main():
             normalize,
         ]))
 
-    train_queue = torch.utils.data.DataLoader(
+    train_queue = DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=args.workers)
 
-    valid_queue = torch.utils.data.DataLoader(
+    valid_queue = DataLoader(
         valid_data, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=args.workers)
 
 
@@ -282,7 +283,7 @@ def train(train_queue, model, criterion, optimizer,attacker,epoch):
         model.flag = att
         logits,sa_w = model(input)
         sw = sa_w
-        zero = torch.zeros_like(sa_w)
+        # zero = torch.zeros_like(sa_w)
         one = torch.ones_like(sa_w)
         # # zero = torch.zeros(shape[0], 3, shape[2],shape[3]).cuda()
         # # one = torch.ones(shape[0], 3, shape[2],shape[3]).cuda()
@@ -336,13 +337,10 @@ def train(train_queue, model, criterion, optimizer,attacker,epoch):
             # zero = torch.zeros(shape[0], 3, shape[2],shape[3]).cuda()
             # one = torch.ones(shape[0], 3, shape[2],shape[3]).cuda()      
             # sa_b = torch.where(sa_w > args.threshold, zero, one)
-            sa_b = torch.mul(sa_w,sa_w)
+            # sa_b = torch.mul(sa_w,sa_w)
             # sa_b = zero
             adv,max_ten = attacker.perturb(back_rate=args.back_rate ,x=input, y=target, sa_b=sa_w)
-
-
             sw = (one - 0.05 * max_ten) * sw
-
             
             input= adv.cuda()
             C_start = time.time()

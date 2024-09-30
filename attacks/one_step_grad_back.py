@@ -105,13 +105,6 @@ class GradientSignAttack_b(Attack, LabelMixin):
         delta[:, 2, :, :].uniform_(-epsilon[2][0][0].item(), epsilon[2][0][0].item())
         delta.requires_grad = True
 
-        max_out, _ = torch.max(delta, dim=1, keepdim=True)
-        # import pdb;pdb.set_trace()
-
-        #########xu yao xiu gai#######
-        max_ten = max_index(max_out,back_rate)
-        ##############################
-
         xadv = x.requires_grad_()
         # xadv = Variable(x.detach(), requires_grad=True)
         # print(xadv)
@@ -136,6 +129,12 @@ class GradientSignAttack_b(Attack, LabelMixin):
         delta.data = delta + epsilon * torch.sign(grad)
         delta = delta.detach()
         # xadv = xadv + self.eps * grad_sign
+
+        max_out, _ = torch.max(delta, dim=1, keepdim=True)
+
+        #########xu yao xiu gai#######
+        max_ten = max_index(max_out,back_rate)
+        ##############################
 
         #######################
         # delta = delta * grad_sign
