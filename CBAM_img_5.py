@@ -46,13 +46,16 @@ class SpatialAttention(nn.Module):
 
         self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
         self.sigmoid = nn.Sigmoid()
+        self.norm = nn.BatchNorm2d(1)
 
     def forward(self, x):
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         x = torch.cat([avg_out, max_out], dim=1)
         x = self.conv1(x)
-        return self.sigmoid(x)
+        x = self.sigmoid(x)
+        x = self.norm(x)
+        return x
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -216,6 +219,30 @@ class ResNet(nn.Module):
         x = self.fc(x)
 
         return x,sa_w
+    
+    def forward_backbone(self, x):
+        x = self.conv0(x)
+        if self.flag == False:
+            sa_w = self.sa(x)  #spatial attention
+        else:
+            sa_w = self.sw
+        x = sa_w * x
+        x = self.bn0(x)
+        x = self.relu0(x)
+
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        return x
 
 
 def resnet18_cbam(pretrained=False, **kwargs):

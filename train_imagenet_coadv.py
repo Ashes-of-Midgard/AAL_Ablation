@@ -15,10 +15,12 @@ import torch.utils
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torch.backends.cudnn as cudnn
+import torch.nn.functional as F
 from attack_type import attackers
 from utils import CrossEntropyLabelSmooth
 from torch.autograd import Variable
 from CBAM_img_5 import resnet50_cbam as resnet50
+from CBAM_img_5 import ResNet
 
 
 parser = argparse.ArgumentParser("training imagenet")
@@ -68,7 +70,7 @@ fh = logging.FileHandler(os.path.join(args.save, 'log.txt'))
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 
-CLASSES = 1000
+CLASSES = 50
 
 class CrossEntropyLabelSmooth(nn.Module):
 
@@ -174,10 +176,14 @@ def main():
 
     valid_queue = DataLoader(
         valid_data, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=args.workers)
+    
+    print('Data loaded successfully!!')
 
 
     train_criterion = CrossEntropyLabelSmooth(CLASSES, args.label_smooth).cuda() \
         if args.label_smooth > 0 else criterion
+    
+    print('loss function initialization succeed!!')
     test_criterion = criterion
     if args.attack_type:
         attacker_train = attackers[args.attack_type](model, loss_fn=train_criterion, eps=args.eps, nb_iter=args.nb_iter, \
@@ -231,7 +237,11 @@ def main():
             val_best = valid_acc_top1
         logging.info('Valid_acc_top1: %f', valid_acc_top1)
         # logging.info('Valid_acc_top5: %f', valid_acc_top5)
-        valid_acc_top1_adv, valid_acc_top5_adv, valid_obj_adv = infer_adv(valid_queue, model, criterion,attacker_test)   #valid_adv
+        valid_acc_top1_adv, valid_acc_top5_adv, valid_obj_adv, dists = infer_adv(valid_queue, model, criterion,attacker_test,epoch=epoch)   #valid_adv
+        logging.info('dist_pixel_adv: %f', dists[0])
+        logging.info('dist_pixel_adv_sa: %g', dists[1])
+        logging.info('dist_feature_adv: %f', dists[2])
+        logging.info('dist_feature_adv_sa: %f', dists[3])
         if valid_acc_top1_adv > val_adv_best:
             val_adv_best = valid_acc_top1_adv
             is_best = True
@@ -272,8 +282,10 @@ def train(train_queue, model, criterion, optimizer,attacker,epoch):
     model.train()
 
     for step, (input, target) in enumerate(train_queue):
+
         target = target.cuda(non_blocking=True)
         input = input.cuda(non_blocking=True)
+
         b_start = time.time()
         optimizer.zero_grad()
         sw = []
@@ -281,7 +293,9 @@ def train(train_queue, model, criterion, optimizer,attacker,epoch):
         # logits,sa_w,sa_wg = model(input)
         model.sw = sw
         model.flag = att
+
         logits,sa_w = model(input)
+
         sw = sa_w
         # zero = torch.zeros_like(sa_w)
         one = torch.ones_like(sa_w)
@@ -296,6 +310,7 @@ def train(train_queue, model, criterion, optimizer,attacker,epoch):
         loss = criterion(logits, target)
         # import pdb;pdb.set_trace()
         loss.backward()
+
 
 
 ################################backtrack######################################
@@ -345,7 +360,7 @@ def train(train_queue, model, criterion, optimizer,attacker,epoch):
             input= adv.cuda()
             C_start = time.time()
             optimizer.zero_grad()
-            model.sw = sw
+            model.sw = sw.detach()
             model.flag = att
             logits,sa_w = model(input)
             
@@ -407,7 +422,7 @@ def infer(valid_queue, model, criterion):
 
     return top1.avg, top5.avg, objs.avg
 
-def infer_adv(valid_queue, model, criterion,attacker):
+def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
     objs = utils.AvgrageMeter()
     top1 = utils.AvgrageMeter()
     top5 = utils.AvgrageMeter()
@@ -417,6 +432,32 @@ def infer_adv(valid_queue, model, criterion,attacker):
         input = input.cuda()
         target = target.cuda(non_blocking=True)
         # adv = attacker.perturb(input, target)
+        ### Ablation Modified ###
+        dist_pixel_adv_sa_mean = 0.0
+        dist_pixel_adv_mean = 0.0
+        dist_feature_adv_sa_mean = 0.0
+        dist_feature_adv_mean = 0.0
+        with torch.no_grad():
+            logits, sa_w = model(input)
+        adv_sa = attacker.perturb(x=input, y=target, sa_b=sa_w)
+        adv = attacker.perturb(x=input, y=target)
+        dist_pixel_adv_sa = torch.dist(adv_sa, input) / len(input)
+        dist_pixel_adv = torch.dist(adv, input) / len(input)
+        #feature_ori = model(input)[0]
+        #feature_adv_sa = model(adv_sa)[0]
+        #feature_adv = model(adv)[0]
+        feature_ori = F.softmax(model(input)[0], dim=1)
+        feature_adv_sa = F.softmax(model(adv_sa)[0], dim=1)
+        feature_adv = F.softmax(model(adv)[0], dim=1)
+        dist_feature_adv_sa = F.kl_div(feature_ori, feature_adv_sa, reduction='batchmean')
+        dist_feature_adv = F.kl_div(feature_ori, feature_adv,  reduction='batchmean')
+        #dist_feature_adv_sa = F.cross_entropy(feature_ori, feature_adv_sa)
+        #dist_feature_adv = F.cross_entropy(feature_ori, feature_adv)
+        dist_pixel_adv_sa_mean += dist_pixel_adv_sa
+        dist_pixel_adv_mean += dist_pixel_adv
+        dist_feature_adv_sa_mean += dist_feature_adv_sa
+        dist_feature_adv_mean += dist_feature_adv
+        ### End Modified ###
         adv = attacker.perturb(x=input, y=target)
         input= adv.cuda()
         target = target.cuda(non_blocking=True)
@@ -442,7 +483,11 @@ def infer_adv(valid_queue, model, criterion,attacker):
                 start_time = time.time()
             logging.info('VALID_adv Step: %03d Objs: %e R1: %f R5: %f Duration: %ds', step, objs.avg, top1.avg, top5.avg, duration)
 
-    return top1.avg, top5.avg, objs.avg
+    dist_pixel_adv_mean = dist_pixel_adv_mean / len(valid_queue)
+    dist_pixel_adv_sa_mean = dist_pixel_adv_sa_mean / len(valid_queue)
+    dist_feature_adv_mean = dist_feature_adv_mean / len(valid_queue)
+    dist_feature_adv_sa_mean = dist_feature_adv_sa_mean / len(valid_queue)
+    return top1.avg, top5.avg, objs.avg, (dist_pixel_adv_mean, dist_pixel_adv_sa_mean, dist_feature_adv_mean, dist_feature_adv_sa_mean)
 
 if __name__ == '__main__':
     main()
