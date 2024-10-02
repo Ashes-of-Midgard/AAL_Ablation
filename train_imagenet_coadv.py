@@ -2,6 +2,7 @@ import os
 import sys
 import numpy as np
 import time
+import scipy.stats
 import torch
 from torch.utils.data import DataLoader
 import utils
@@ -10,6 +11,7 @@ import random
 import logging
 import argparse
 import torch.nn as nn
+import scipy
 # import genotypes
 import torch.utils
 import torchvision.datasets as dset
@@ -240,8 +242,12 @@ def main():
         valid_acc_top1_adv, valid_acc_top5_adv, valid_obj_adv, dists = infer_adv(valid_queue, model, criterion,attacker_test,epoch=epoch)   #valid_adv
         logging.info('dist_pixel_adv: %f', dists[0])
         logging.info('dist_pixel_adv_sa: %g', dists[1])
-        logging.info('dist_feature_adv: %f', dists[2])
-        logging.info('dist_feature_adv_sa: %f', dists[3])
+        logging.info('dist_feature_adv_eu: %f', dists[2])
+        logging.info('dist_feature_adv_sa_eu: %f', dists[3])
+        logging.info('dist_feature_adv_kl: %f', dists[4])
+        logging.info('dist_feature_adv_sa_kl: %f', dists[5])
+        logging.info('dist_feature_adv_emd: %f', dists[6])
+        logging.info('dist_feature_adv_sa_emd: %f', dists[7])
         if valid_acc_top1_adv > val_adv_best:
             val_adv_best = valid_acc_top1_adv
             is_best = True
@@ -435,8 +441,12 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
         ### Ablation Modified ###
         dist_pixel_adv_sa_mean = 0.0
         dist_pixel_adv_mean = 0.0
-        dist_feature_adv_sa_mean = 0.0
-        dist_feature_adv_mean = 0.0
+        dist_feature_adv_eu_mean = 0.0
+        dist_feature_adv_sa_eu_mean = 0.0
+        dist_feature_adv_kl_mean = 0.0
+        dist_feature_adv_sa_kl_mean = 0.0
+        dist_feature_adv_emd_mean = 0.0
+        dist_feature_adv_sa_emd_mean = 0.0
         with torch.no_grad():
             logits, sa_w = model(input)
         adv_sa = attacker.perturb(x=input, y=target, sa_b=sa_w)
@@ -449,14 +459,23 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
         feature_ori = F.softmax(model(input)[0], dim=1)
         feature_adv_sa = F.softmax(model(adv_sa)[0], dim=1)
         feature_adv = F.softmax(model(adv)[0], dim=1)
-        dist_feature_adv_sa = F.kl_div(feature_ori, feature_adv_sa, reduction='batchmean')
-        dist_feature_adv = F.kl_div(feature_ori, feature_adv,  reduction='batchmean')
+        dist_feature_adv_eu = torch.dist(feature_ori, feature_adv) / len(input)
+        dist_feature_adv_sa_eu = torch.dist(feature_ori, feature_adv_sa) / len(input)
+        dist_feature_adv_kl = F.kl_div(feature_ori, feature_adv,  reduction='batchmean')
+        dist_feature_adv_sa_kl = F.kl_div(feature_ori, feature_adv_sa, reduction='batchmean')
+        # Calculate EMD
+        dist_feature_adv_emd = EMD(feature_ori, feature_adv)
+        dist_feature_adv_sa_emd = EMD(feature_ori, feature_adv_sa)
         #dist_feature_adv_sa = F.cross_entropy(feature_ori, feature_adv_sa)
         #dist_feature_adv = F.cross_entropy(feature_ori, feature_adv)
         dist_pixel_adv_sa_mean += dist_pixel_adv_sa
         dist_pixel_adv_mean += dist_pixel_adv
-        dist_feature_adv_sa_mean += dist_feature_adv_sa
-        dist_feature_adv_mean += dist_feature_adv
+        dist_feature_adv_eu_mean += dist_feature_adv_eu
+        dist_feature_adv_sa_eu_mean += dist_feature_adv_sa_eu
+        dist_feature_adv_kl_mean += dist_feature_adv_kl
+        dist_feature_adv_sa_kl_mean += dist_feature_adv_sa_kl
+        dist_feature_adv_emd_mean += dist_feature_adv_emd
+        dist_feature_adv_sa_emd_mean += dist_feature_adv_sa_emd
         ### End Modified ###
         adv = attacker.perturb(x=input, y=target)
         input= adv.cuda()
@@ -485,9 +504,28 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
 
     dist_pixel_adv_mean = dist_pixel_adv_mean / len(valid_queue)
     dist_pixel_adv_sa_mean = dist_pixel_adv_sa_mean / len(valid_queue)
-    dist_feature_adv_mean = dist_feature_adv_mean / len(valid_queue)
-    dist_feature_adv_sa_mean = dist_feature_adv_sa_mean / len(valid_queue)
-    return top1.avg, top5.avg, objs.avg, (dist_pixel_adv_mean, dist_pixel_adv_sa_mean, dist_feature_adv_mean, dist_feature_adv_sa_mean)
+    dist_feature_adv_eu_mean = dist_feature_adv_eu_mean / len(valid_queue)
+    dist_feature_adv_sa_eu_mean = dist_feature_adv_sa_eu_mean / len(valid_queue)
+    dist_feature_adv_kl_mean = dist_feature_adv_kl_mean / len(valid_queue)
+    dist_feature_adv_sa_kl_mean = dist_feature_adv_sa_kl_mean / len(valid_queue)
+    dist_feature_adv_emd_mean = dist_feature_adv_emd_mean / len(valid_queue)
+    dist_feature_adv_sa_emd_mean = dist_feature_adv_sa_emd_mean / len(valid_queue)
+    return top1.avg, top5.avg, objs.avg, (dist_pixel_adv_mean, dist_pixel_adv_sa_mean,
+                                          dist_feature_adv_eu_mean, dist_feature_adv_sa_eu_mean,
+                                          dist_feature_adv_kl_mean, dist_feature_adv_sa_kl_mean,
+                                          dist_feature_adv_emd_mean, dist_feature_adv_sa_emd_mean)
+
+
+def EMD(h1_batch:torch.Tensor, h2_batch:torch.Tensor):
+    emd_mean = torch.zeros([1])
+    for i in range(len(h1_batch)):
+        h1 = np.array(h1_batch[i].detach().cpu())
+        h2 = np.array(h2_batch[i].detach().cpu())
+        location1 = np.array(range(len(h1)))
+        location2 = np.array(range(len(h2)))
+        emd_mean += scipy.stats.wasserstein_distance(h1, h2, location1, location2)
+    return emd_mean / len(h1_batch)
+
 
 if __name__ == '__main__':
     main()
