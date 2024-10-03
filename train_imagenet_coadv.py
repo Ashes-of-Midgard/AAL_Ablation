@@ -108,7 +108,7 @@ def main():
     print('--------------------------')
     att = False
     sw = []
-    model = resnet50(flag=att,sw=sw)
+    model = resnet50(flag=att,sw=sw,num_classes=CLASSES)
     if len(args.gpu)> 1:
         # model = nn.DataParallel(model)
         # model = model.cuda()
@@ -134,7 +134,7 @@ def main():
         logging.info('==> Resuming from checkpoint..')
         logging.info(args.resume)
         checkpoint = torch.load(args.resume, map_location='cpu')
-        model.load_state_dict(checkpoint['state_dict'])
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
         # model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         best_adv_top1 = checkpoint['best_acc_top1']
@@ -246,8 +246,10 @@ def main():
         logging.info('dist_feature_adv_sa_eu: %f', dists[3])
         logging.info('dist_feature_adv_kl: %f', dists[4])
         logging.info('dist_feature_adv_sa_kl: %f', dists[5])
-        logging.info('dist_feature_adv_emd: %f', dists[6])
-        logging.info('dist_feature_adv_sa_emd: %f', dists[7])
+        logging.info('dist_feature_adv_js: %f', dists[6])
+        logging.info('dist_feature_adv_sa_js: %f', dists[7])
+        logging.info('dist_feature_adv_emd: %f', dists[8])
+        logging.info('dist_feature_adv_sa_emd: %f', dists[9])
         if valid_acc_top1_adv > val_adv_best:
             val_adv_best = valid_acc_top1_adv
             is_best = True
@@ -445,6 +447,8 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
         dist_feature_adv_sa_eu_mean = 0.0
         dist_feature_adv_kl_mean = 0.0
         dist_feature_adv_sa_kl_mean = 0.0
+        dist_feature_adv_js_mean = 0.0
+        dist_feature_adv_sa_js_mean = 0.0
         dist_feature_adv_emd_mean = 0.0
         dist_feature_adv_sa_emd_mean = 0.0
         with torch.no_grad():
@@ -463,6 +467,8 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
         dist_feature_adv_sa_eu = torch.dist(feature_ori, feature_adv_sa) / len(input)
         dist_feature_adv_kl = F.kl_div(feature_ori, feature_adv,  reduction='batchmean')
         dist_feature_adv_sa_kl = F.kl_div(feature_ori, feature_adv_sa, reduction='batchmean')
+        dist_feature_adv_js = 0.5 * F.kl_div(feature_ori, feature_adv,  reduction='batchmean') + 0.5 * F.kl_div(feature_adv, feature_ori,  reduction='batchmean')
+        dist_feature_adv_sa_js = 0.5 * F.kl_div(feature_ori, feature_adv_sa,  reduction='batchmean') + 0.5 * F.kl_div(feature_adv_sa, feature_ori,  reduction='batchmean')
         # Calculate EMD
         dist_feature_adv_emd = EMD(feature_ori, feature_adv)
         dist_feature_adv_sa_emd = EMD(feature_ori, feature_adv_sa)
@@ -474,6 +480,8 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
         dist_feature_adv_sa_eu_mean += dist_feature_adv_sa_eu
         dist_feature_adv_kl_mean += dist_feature_adv_kl
         dist_feature_adv_sa_kl_mean += dist_feature_adv_sa_kl
+        dist_feature_adv_js_mean += dist_feature_adv_js
+        dist_feature_adv_sa_js_mean += dist_feature_adv_sa_js
         dist_feature_adv_emd_mean += dist_feature_adv_emd
         dist_feature_adv_sa_emd_mean += dist_feature_adv_sa_emd
         ### End Modified ###
@@ -508,11 +516,14 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
     dist_feature_adv_sa_eu_mean = dist_feature_adv_sa_eu_mean / len(valid_queue)
     dist_feature_adv_kl_mean = dist_feature_adv_kl_mean / len(valid_queue)
     dist_feature_adv_sa_kl_mean = dist_feature_adv_sa_kl_mean / len(valid_queue)
+    dist_feature_adv_js_mean = dist_feature_adv_js_mean / len(valid_queue)
+    dist_feature_adv_sa_js_mean = dist_feature_adv_sa_js_mean / len(valid_queue)
     dist_feature_adv_emd_mean = dist_feature_adv_emd_mean / len(valid_queue)
     dist_feature_adv_sa_emd_mean = dist_feature_adv_sa_emd_mean / len(valid_queue)
     return top1.avg, top5.avg, objs.avg, (dist_pixel_adv_mean, dist_pixel_adv_sa_mean,
                                           dist_feature_adv_eu_mean, dist_feature_adv_sa_eu_mean,
                                           dist_feature_adv_kl_mean, dist_feature_adv_sa_kl_mean,
+                                          dist_feature_adv_js_mean, dist_feature_adv_sa_js_mean,
                                           dist_feature_adv_emd_mean, dist_feature_adv_sa_emd_mean)
 
 
