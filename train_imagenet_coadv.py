@@ -134,16 +134,21 @@ def main():
         logging.info('==> Resuming from checkpoint..')
         logging.info(args.resume)
         checkpoint = torch.load(args.resume, map_location='cpu')
-        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        loaded_state_dict = {}
+        for weight in checkpoint['state_dict'].keys():
+            if weight in model.state_dict().keys():
+                if model.state_dict()[weight].shape == checkpoint['state_dict'][weight].shape:
+                    loaded_state_dict[weight] = checkpoint['state_dict'][weight]
+        model.load_state_dict(loaded_state_dict, strict=False)
         # model.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        best_adv_top1 = checkpoint['best_acc_top1']
+        # optimizer.load_state_dict(checkpoint['optimizer'])
+        # best_adv_top1 = checkpoint['best_acc_top1']
         # if not args.tuning:
-        start_epoch = checkpoint['epoch']
-        logging.info("Current best Prec@1 = {:.4%}".format(best_adv_top1/100))
+        # start_epoch = checkpoint['epoch']
+        # logging.info("Current best Prec@1 = {:.4%}".format(best_adv_top1/100))
     else:
         logging.info('==> ORI Training')
-        start_epoch = 0
+    start_epoch = 0
 
     # data_dir = os.path.join(args.tmp_data_dir, 'imagenet_search')
     # traindir = os.path.join(data_dir, 'train')
@@ -465,10 +470,10 @@ def infer_adv(valid_queue, model:ResNet, criterion,attacker, epoch):
         feature_adv = F.softmax(model(adv)[0], dim=1)
         dist_feature_adv_eu = torch.dist(feature_ori, feature_adv) / len(input)
         dist_feature_adv_sa_eu = torch.dist(feature_ori, feature_adv_sa) / len(input)
-        dist_feature_adv_kl = F.kl_div(feature_ori, feature_adv,  reduction='batchmean')
-        dist_feature_adv_sa_kl = F.kl_div(feature_ori, feature_adv_sa, reduction='batchmean')
-        dist_feature_adv_js = 0.5 * F.kl_div(feature_ori, feature_adv,  reduction='batchmean') + 0.5 * F.kl_div(feature_adv, feature_ori,  reduction='batchmean')
-        dist_feature_adv_sa_js = 0.5 * F.kl_div(feature_ori, feature_adv_sa,  reduction='batchmean') + 0.5 * F.kl_div(feature_adv_sa, feature_ori,  reduction='batchmean')
+        dist_feature_adv_kl = KL_Div(feature_ori, feature_adv)
+        dist_feature_adv_sa_kl = KL_Div(feature_ori, feature_adv_sa)
+        dist_feature_adv_js = 0.5 * KL_Div(feature_ori, feature_adv) + 0.5 * KL_Div(feature_adv, feature_ori)
+        dist_feature_adv_sa_js = 0.5 * KL_Div(feature_ori, feature_adv_sa) + 0.5 * KL_Div(feature_adv_sa, feature_ori)
         # Calculate EMD
         dist_feature_adv_emd = EMD(feature_ori, feature_adv)
         dist_feature_adv_sa_emd = EMD(feature_ori, feature_adv_sa)
@@ -536,6 +541,15 @@ def EMD(h1_batch:torch.Tensor, h2_batch:torch.Tensor):
         location2 = np.array(range(len(h2)))
         emd_mean += scipy.stats.wasserstein_distance(h1, h2, location1, location2)
     return emd_mean / len(h1_batch)
+
+
+def KL_Div(h1_batch:torch.Tensor, h2_batch:torch.Tensor):
+    kl_div_mean = torch.zeros([1]).to(h1_batch.device)
+    for i in range(len(h1_batch)):
+        h1 = h1_batch[i]
+        h2 = h2_batch[i]
+        kl_div_mean += torch.sum(h1 * (torch.log(h1) - torch.log(h2)), dim=0, keepdim=False)
+    return kl_div_mean / len(h1_batch)
 
 
 if __name__ == '__main__':
