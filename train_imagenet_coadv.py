@@ -72,7 +72,7 @@ fh = logging.FileHandler(os.path.join(args.save, 'log.txt'))
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 
-CLASSES = 50
+CLASSES = 10
 
 class CrossEntropyLabelSmooth(nn.Module):
 
@@ -148,8 +148,8 @@ def main():
     # data_dir = os.path.join(args.tmp_data_dir, 'imagenet_search')
     # traindir = os.path.join(data_dir, 'train')
     # validdir = os.path.join(data_dir, 'val')
-    traindir = os.path.join(args.tmp_data_dir, 'train_50')
-    validdir = os.path.join(args.tmp_data_dir, 'val_50')
+    traindir = os.path.join(args.tmp_data_dir, 'train_10')
+    validdir = os.path.join(args.tmp_data_dir, 'val_10')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     train_data = dset.ImageFolder(
         traindir,

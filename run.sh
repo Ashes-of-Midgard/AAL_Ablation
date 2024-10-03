@@ -1,0 +1,10 @@
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
+bash train_imagenet_coadv.sh
